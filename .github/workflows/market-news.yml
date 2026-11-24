@@ -1,0 +1,53 @@
+name: market-news
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"   # digest every 4 hours
+    - cron: "15 * * * *"    # alert check every hour
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "digest or alert"
+        default: "digest"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: market-news
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install feedparser requests
+
+      - name: Pick mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "MODE=${{ inputs.mode }}" >> "$GITHUB_ENV"
+          elif [ "${{ github.event.schedule }}" = "0 */4 * * *" ]; then
+            echo "MODE=digest" >> "$GITHUB_ENV"
+          else
+            echo "MODE=alert" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run bot
+        run: python market_bot_free.py "$MODE"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Save state
+        run: |
+          git config user.name "market-bot"
+          git config user.email "market-bot@users.noreply.github.com"
+          git add seen.json || true
+          git diff --cached --quiet || (git commit -m "update seen headlines" && git push)
