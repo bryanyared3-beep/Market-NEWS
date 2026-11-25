@@ -3,7 +3,7 @@ name: market-news
 on:
   schedule:
     - cron: "0 */4 * * *"   # digest every 4 hours
-    - cron: "15 * * * *"    # alert check every hour
+    - cron: "*/10 * * * *"    # alert check every hour
   workflow_dispatch:
     inputs:
       mode:
