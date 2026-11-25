@@ -92,19 +92,31 @@ def fetch_items(hours: float) -> list:
 
 
 def gemini(prompt: str, json_mode: bool = False) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
     body = {"contents": [{"parts": [{"text": prompt}]}]}
     if json_mode:
         body["generationConfig"] = {"responseMimeType": "application/json"}
-    for attempt in range(3):
-        r = requests.post(url, headers={"x-goog-api-key": GEMINI_KEY}, json=body, timeout=90)
-        if r.status_code == 429:  # free-tier rate limit: wait and retry
-            time.sleep(30 * (attempt + 1))
-            continue
-        r.raise_for_status()
-        parts = r.json()["candidates"][0]["content"]["parts"]
-        return "".join(p.get("text", "") for p in parts).strip()
-    raise RuntimeError("Gemini rate limited, giving up this run")
+    last = "unknown"
+    # Try the main model first, then fall back to others if it is overloaded or retired.
+    for model in dict.fromkeys([MODEL, "gemini-3.6-flash", "gemini-3.5-flash-lite"]):
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        for attempt in range(3):
+            try:
+                r = requests.post(url, headers={"x-goog-api-key": GEMINI_KEY}, json=body, timeout=90)
+            except requests.RequestException as exc:
+                last = str(exc)
+                time.sleep(10 * (attempt + 1))
+                continue
+            if r.status_code in (429, 500, 502, 503, 504):  # busy or rate limited: wait, retry
+                last = f"{model}: HTTP {r.status_code}"
+                time.sleep(15 * (attempt + 1))
+                continue
+            if r.status_code == 404:  # model not available: try the next one
+                last = f"{model}: HTTP 404"
+                break
+            r.raise_for_status()
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            return "".join(p.get("text", "") for p in parts).strip()
+    raise RuntimeError(f"Gemini unavailable after retries ({last})")
 
 
 def send_telegram(text: str) -> None:
